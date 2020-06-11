@@ -1,1 +1,2 @@
 ./heatmap 1000 4 15 0.5 1 ds1.csv
+./heatmap --L1 44,34,4 --L2 34,24,4 --L3 24,14,4 --interval .5 --verbose --dataset ds1.csv

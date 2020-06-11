@@ -1,0 +1,763 @@
+/* File: heatmap.cpp
+ * Author: Zach McMichael
+ * Description: makes a heatmap of the used memory 
+ *				based on a prerecorded dataset
+ */
+
+#include <iostream>
+#include <cstdlib>
+#include <iomanip>
+#include <fstream>
+#include <string>
+#include <map>
+#include <sstream>
+#include <utility>
+#include <functional>
+#include <math.h>
+#include <boost/dynamic_bitset.hpp>
+#include <getopt.h>
+
+#define RESET   "\033[0m"     
+#define RED     "\033[31m" 
+#define GREEN   "\033[32m" 
+#define MAGENTA "\033[35m" 
+#define CYAN    "\033[36m"
+
+using namespace std;
+
+class Global {
+
+	public:
+		int debug; //for extra prints for debugging
+
+		//passed in parameters
+		float interval; //ammount of time between heatmaping the data
+		int verbose; //extra prints
+
+		//for creating the map from the dataset
+		map<double, string>::iterator loc; //itterator for the dataset to hold current position
+		long total_address_space; //total amount of address space for the dataset
+		long rounded_total_address_space; //total amount of address space for the dataset rounded up to the neares kilobyte
+		long first_address_as_long;
+		string first_address = "FFFFFFFFFFFFFFFF";       //first address in the address space
+		string last_address = "0000000000000000";		 //last address in the address space
+		string f_last_address = "0000000000000000";		 //final last address in the address space
+
+		//datastructures for cache
+    int counter_size_phase_1; //size of the number of bits in for the counter in the phase 1 cache
+    int counter_size_phase_2; //size of the number of bits in for the counter in the phase 2 cache
+    int counter_size_phase_3; //size of the number of bits in for the counter in the phase 3 cache
+    long cache_size_phase_1; //size of the cache in bits for phase 1
+    long cache_size_phase_2; //size of the cache in bits for phase 2
+    long cache_size_phase_3; //size of the cache in bits for phase 3
+		long total_data_size_phase_1; //size of the total amount of data in phase 1
+		long total_data_size_phase_2; //size of the total amount of data in phase 2
+		long total_data_size_phase_3; //size of the total amount of data in phase 3
+		long region_size_phase_1; //size of each region in phase 1
+		long region_size_phase_2; //size of each region in phase 2
+		long region_size_phase_3; //size of each region in phase 3
+		vector<boost::dynamic_bitset<>> phase_1_cache; //the cache for phase 1
+		vector<boost::dynamic_bitset<>> phase_2_cache; //the cache for phase 2
+		vector<boost::dynamic_bitset<>> phase_3_cache; //the cache for phase 3
+		
+		//datastructures for memory map
+		int phase_2_mmap_cache_bits; //number of bits needed in the mmap to offset into the cache
+		int phase_3_mmap_cache_bits; //number of bits needed in the mmap to offset into the cache
+		int phase_2_mmap_region_bits; //number of bits needed in the mmap to figure out which region this belongs to
+		int phase_3_mmap_region_bits; //number of bits needed in the mmap to figure out which region this belongs to
+		int phase_2_mmap_region_zeros; //number of bits needed in the mmap to pad the address with zeros
+		int phase_3_mmap_region_zeros; //number of bits needed in the mmap to pad the address with zeros
+		typedef decltype(boost::dynamic_bitset<>(1)) cache_offset;
+		typedef decltype(boost::dynamic_bitset<>(1)) mmu_offset;
+		map<mmu_offset, cache_offset> phase_2_mmap; //the memory map for phase 2
+		map<mmu_offset, cache_offset> phase_3_mmap; //the memory map for phase 3
+
+	//##### helper functions #####
+  pair<string, string> get_log2_size(long num) {
+    string s_num;
+    string s_type;
+    if(num > pow(2,49)) {
+      cout << "Size is invalid" << endl;
+      exit(1);
+    }else if(num > pow(2, 39)) {
+      s_num = to_string(num/1000000000000);
+      s_type = " Terabytes";
+      return make_pair(s_num, s_type);
+    }else if(num > pow(2, 29)) {
+      s_num = to_string(num/1000000000);
+      s_type = " Gigabytes";
+      return make_pair(s_num, s_type);
+    }else if(num > pow(2, 19)) {
+      s_num = to_string(num/1000000);
+      s_type = " Megabytes";
+      return make_pair(s_num, s_type);
+    }else if(num > pow(2, 9)) {
+      s_num = to_string(num/1000);
+      s_type = " Kilobytes";
+      return make_pair(s_num, s_type);
+    }else {
+      s_num = to_string(num);
+      s_type = " Bytes";
+      return make_pair(s_num, s_type);
+    }
+  }
+  /*
+  //Finds the highest power of 2
+	long round_next_pwr(long v){
+		v--;
+		v |= v >> 1;
+		v |= v >> 2;
+		v |= v >> 4;
+		v |= v >> 8;
+		v |= v >> 16;
+		v++;
+		return v;
+	}
+	
+	//converts an address as a long to a string
+	string long_to_string(long address) {
+		stringstream ss;
+		string address_str;
+
+		ss << hex << address;
+		ss >> address_str;
+		return address_str;
+	}
+
+	//Converts an address as a string to a long
+	long string_to_long(string address) {
+		stringstream ss;
+		long address_long;
+
+		ss << hex << address;
+		ss >> address_long;
+		return address_long;
+	}
+
+	//calculates the total amount of bytes
+	long calc_size_space(string first_address, string last_address) {
+		long first_address_long;
+		long last_address_long;
+		
+		first_address_long = string_to_long(first_address);
+		last_address_long = string_to_long(last_address);
+		
+		return  last_address_long - first_address_long;
+	}
+
+	//calculate the last address with the added rounding
+	string calc_final_address(long space_size, string first_address) {
+		long first_address_int;
+		long last_address_int;
+		char hex_string[17];
+		int calc = 0;
+		int loc = 0;
+		bool first = true;
+		int end = 15;
+		stringstream ss;
+		
+		ss << hex << first_address;
+		ss >> first_address_int;
+		ss.clear();
+	
+		first_address_as_long = first_address_int;
+
+		for(int i=0; i<16; i++) {
+			hex_string[i] = -1;
+		}
+
+		last_address_int = first_address_int + space_size;
+		ss << hex << last_address_int;
+		ss >> hex_string;
+
+		for(int i=0; i<16; i++) {
+			if(hex_string[i] == '\0'){
+				if(first){
+					first = false;
+					loc = i;
+				}
+				calc++;
+			}
+		}
+		if(calc == 1){
+			for(int i=loc-1; i>=0; i--){
+				hex_string[end] = tolower(hex_string[i]);
+				end--;
+			}
+			for(int i=0; i<end+1; i++){
+				hex_string[i] = '0';
+			}
+		}
+		hex_string[16] = '\0';
+
+		return  hex_string;
+	}
+
+	//convert the counter to a long
+	int to_long(int phase, long offset) {
+		long ret = 0;
+		for(int i=0; i<counter_size; i++) {
+			if(phase == 1) {
+				ret |= ((phase_1_cache[offset][counter_size-i-1])<<i); 
+			}else if(phase == 2) {
+				ret |= ((phase_2_cache[offset][counter_size-i-1])<<i); 
+			}else if(phase == 3) {
+				ret |= ((phase_3_cache[offset][counter_size-i-1])<<i); 
+			}else{
+				cout << "Error: phase must be 1-3" << endl;
+				exit(1);
+			}
+		}
+		return ret;
+	}
+	
+	//increment the counter by one if it is not maxed
+	int increment(int phase, long offset) {
+		long value = to_long(phase, offset);
+		if(value < (pow(2, counter_size)-1)){
+			value++;
+			if(debug)cout << "Counter: " << GREEN << to_long(1, offset) << RESET << ", ";
+			for(int i=0; i<counter_size; i++) {
+				if(phase == 1) {
+					phase_1_cache[offset][counter_size-i-1] = ((value>>i)&1);
+					if(debug)cout << GREEN << to_long(1, offset) << RESET << ", ";
+				}else if(phase == 2) {
+					phase_2_cache[offset][counter_size-i-1] = ((value>>i)&1);
+				}else if(phase == 3) {
+					phase_3_cache[offset][counter_size-i-1] = ((value>>i)&1);
+				}
+			}
+			if(debug)cout << endl;
+			return 1;
+		}else{
+			return 0;
+		}
+	}
+
+	//find the offset at the specified address for the phase
+	long find_offset(int phase, string addr) {
+		int i;
+		long address_long;
+		long offset;
+		stringstream ss;
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_region_bits)) p2_mmu_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_region_bits)) p3_mmu_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_cache_bits)) p2_cache_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_cache_bits)) p3_cache_offset_size;
+		map<p2_mmu_offset_size, p2_cache_offset_size>::iterator p2_mmap_itter; //the memory map itterator
+		map<p3_mmu_offset_size, p3_cache_offset_size>::iterator p3_mmap_itter; //the memory map itterator
+		
+		ss << hex << addr;
+		ss >> address_long;
+		ss.clear();
+			
+		if(phase == 1) {
+			return (ceil((address_long-first_address_as_long)/region_size_phase_1)+1);
+		}else if(phase == 2) {
+			//convert address to bitset for lookup in mmap
+			if(1) cout << "Address Long: " << address_long << "  Address Hex: " 
+				 << hex << address_long << dec << endl;
+			address_long = address_long >> phase_2_mmap_region_zeros;
+			boost::dynamic_bitset<> tmp_bitset_r(phase_2_mmap_region_bits);
+			for(i=0; i<phase_2_mmap_region_bits; i++) {
+				tmp_bitset_r[phase_2_mmap_region_bits-i-1] = ((address_long)>>i)&1;
+			}
+			//remove
+			long test_a = 0;
+			for(i=0; i<phase_2_mmap_region_bits; i++){
+				test_a |= tmp_bitset_r[phase_2_mmap_region_bits-i-1]<<i;
+			}
+			if(1) cout << "tmp_bitset_r: " << fixed << test_a << "  Hex: " << hex << test_a 
+				 << dec << endl;
+			//find in mmap and convert from bitset to long
+			boost::dynamic_bitset<> tmp_bitset_c(phase_2_mmap_cache_bits);
+			p2_mmap_itter = phase_2_mmap.find(tmp_bitset_r);
+			if(p2_mmap_itter == phase_2_mmap.end()) {
+				cout << RED << "CRAP!" << RESET << endl;
+			}else{
+				cout << GREEN << "WOOO!" << RESET << endl;
+			}
+
+			if(p2_mmap_itter != phase_2_mmap.end()) {
+				tmp_bitset_c = p2_mmap_itter->second;
+				if(1) cout << "tmp_bitset_c: " << tmp_bitset_c << endl;
+			}else{
+				//address not found in phase2 mmap
+				return -1;
+			}
+			for(i=0; i<phase_2_mmap_cache_bits; i++) {
+				offset |= ((tmp_bitset_c[phase_2_mmap_cache_bits-i-1])<<i); 
+			}
+			return offset;
+		}else if(phase == 3) {
+
+		}
+	}
+
+	//calculate if the counter is maxed out
+	bool is_not_maxed(int* c_ptr) {
+		int i; //for looping
+		for(i=0; i<counter_size; i++) {
+			if(!((*c_ptr)&(1UL<<i))) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	//##### main functions #####
+	//initilize the maps and vectors
+	void init() {
+		int i, j; //for looping
+		long print_l_r; //to print the bits as a long
+		long print_l_c; //to print the bits as a long
+		long address; //the address for setting up mmaps
+		long add_address; //the address for setting up mmaps
+		long incr_address; //the amount to add to the address to increment by region
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_region_bits)) p2_mmu_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_region_bits)) p3_mmu_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_cache_bits)) p2_cache_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_cache_bits)) p3_cache_offset_size;
+
+		//initialize phase_1_cache
+		vector<boost::dynamic_bitset<>> tmp_1(num_cache_regions, boost::dynamic_bitset<>(counter_size));
+        phase_1_cache = tmp_1;
+		
+		//initialize phase_2_cache
+		vector<boost::dynamic_bitset<>> tmp_2(num_cache_regions, boost::dynamic_bitset<>(counter_size));
+        phase_2_cache = tmp_2;
+		
+		//initialize phase_3_cache
+		vector<boost::dynamic_bitset<>> tmp_3(num_cache_regions, boost::dynamic_bitset<>(counter_size));
+        phase_3_cache = tmp_3;
+
+		cout << "R B: " << phase_2_mmap_region_bits << endl;
+
+		//initialize phase_2_mmap
+		incr_address = pow(2, phase_2_mmap_region_zeros);
+		address = string_to_long(first_address);
+		add_address = (address >> phase_2_mmap_region_zeros);
+		
+		if(1) cout << "First_address: " << long_to_string(address) << endl;
+		for(i=0; i<num_cache_regions; i++) {
+			boost::dynamic_bitset<> tmp_offset(phase_2_mmap_region_bits);
+			print_l_r = 0;
+			print_l_c = 0;
+			cout << "Region: ";
+			for(j=0; j<phase_2_mmap_region_bits; j++) {
+				tmp_offset[phase_2_mmap_region_bits-j-1] = ((add_address>>j)&1);
+			  cout << tmp_offset[j];
+				print_l_r |= (tmp_offset[phase_2_mmap_region_bits-j-1]<<j);
+			}
+			cout << endl;
+
+			boost::dynamic_bitset<> tmp_cache(phase_2_mmap_cache_bits);
+			cout << "Cache: ";
+			for(j=0; j<phase_2_mmap_cache_bits; j++) {
+				tmp_cache[phase_2_mmap_cache_bits-j-1] = ((i>>j)&1);
+				cout << tmp_cache[j];
+				print_l_c |= (tmp_cache[phase_2_mmap_cache_bits-j-1]<<j);
+			}
+			cout << endl << endl;
+			if(1) cout << "Phase 2 mmap-> " << "Offset: " << fixed << hex << print_l_r 
+				 << ", " << dec << print_l_r << " -- Cache: " << fixed << hex << print_l_c 
+				 << ", " << dec << print_l_c << endl;
+			phase_2_mmap.insert(pair<p2_mmu_offset_size, p2_cache_offset_size>(tmp_offset, tmp_cache));
+			address += incr_address; 
+			add_address = (address >> phase_2_mmap_region_zeros);
+		}
+
+		//initialize phase_3_mmap
+		incr_address = pow(2, phase_3_mmap_region_zeros);
+		address = string_to_long(first_address);
+		add_address = (address >> phase_3_mmap_region_zeros);
+		
+		if(debug) cout << "First_address: " << long_to_string(address) << endl;
+		for(i=0; i<num_cache_regions; i++) {
+			boost::dynamic_bitset<> tmp_offset(phase_3_mmap_region_bits);
+			print_l_r = 0;
+			print_l_c = 0;
+			for(j=0; j<phase_3_mmap_region_bits; j++) {
+				tmp_offset[phase_3_mmap_region_bits-j-1] = ((add_address>>j)&1);
+				print_l_r |= (tmp_offset[phase_3_mmap_region_bits-j-1]<<j);
+			}
+
+			boost::dynamic_bitset<> tmp_cache(phase_3_mmap_cache_bits);
+			for(j=0; j<phase_3_mmap_cache_bits; j++) {
+				tmp_cache[phase_3_mmap_cache_bits-j-1] = ((i>>j)&1);
+				print_l_c |= (tmp_cache[phase_3_mmap_cache_bits-j-1]<<j);
+			}
+			if(debug) cout << "Phase 3 mmap-> " << "Offset: " << hex << print_l_r 
+				 << ", " << dec << print_l_r << " -- Cache: " << hex << print_l_c 
+				 << ", " << dec << print_l_c << endl;
+			phase_3_mmap.insert(pair<p3_mmu_offset_size, p3_cache_offset_size>());
+			address += incr_address; 
+			add_address = (address >> phase_3_mmap_region_zeros);
+		}
+	}
+
+	//iterate over the data set for a single interval amount of time and increment 
+	//the counters for all three runs
+	void run() {
+		double finish_here = last_time_looked_at + interval;
+		long offset;
+		long p1_add_offset;
+		int count = 0;
+		long counter;
+		boost::dynamic_bitset<> counter_bitset(counter_size);
+
+		//TEST#####################
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_region_bits)) p2_mmu_offset_size;
+		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_cache_bits)) p2_cache_offset_size;
+		map<p2_mmu_offset_size, p2_cache_offset_size>::iterator p2_mmap_itter; //the memory map itterator
+		p2_mmu_offset_size first_b;
+		p2_cache_offset_size second_b;
+		long first = 0;
+		long second = 0;
+		p2_mmap_itter = phase_2_mmap.begin();
+		if(p2_mmap_itter != phase_2_mmap.end()){
+			cout << GREEN << "GOOD" << RESET << endl;
+		}else{
+			cout << RED << "BAD" << RESET << endl;
+		}
+		first_b = p2_mmap_itter->first;
+		second_b = p2_mmap_itter->second;
+		for(int i=0; i<phase_2_mmap_region_bits; i++) {
+			first |= (first_b[phase_2_mmap_region_bits-i-1])<<i;
+			cout << "i=" << i << " First: " << first_b[i] << endl;
+		}
+		for(int i=0; i<phase_2_mmap_cache_bits; i++) {
+			second |= (second_b[phase_2_mmap_cache_bits-i-1])<<i;
+			cout << "i=" << i << " Second: " << second_b[i] << endl;
+		}
+		cout << "First in map: " << first << ", " << hex << first << "  Second: " << dec << second << ", " <<  hex << second << endl;
+		exit(0);
+		//TEST#####################
+		
+		while(loc->first <= finish_here) {
+			//phase_1
+			offset = find_offset(1, loc->second);
+			counter_bitset = phase_1_cache[offset];
+			counter = to_long(1, offset);
+			if(increment(1, offset)) {
+				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
+					<< "  Counter: " << dec << counter << endl;
+			}else{
+				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
+					<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
+					<< RESET << endl;
+			}
+
+			//phase_2
+			offset = find_offset(2, loc->second);
+			if(offset != -1) {
+				cout << "P2 Offset: " << GREEN << offset << RESET << endl;
+				counter_bitset = phase_2_cache[offset];
+				counter = to_long(2, offset);
+				if(increment(2, offset)) {
+					if(verbose) cout << GREEN << "Phase 2" << "  Offset: " << fixed << hex << offset 
+						<< "  Counter: " << dec << counter << endl;
+				}else{
+					if(verbose) cout << GREEN << "Phase 2" << "  Offset: " << fixed << hex << offset 
+						<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
+						<< RESET << endl;
+				}
+			}else{
+				if(verbose) cout << "Phase 2" << "  Offset: " << fixed << hex << 0 
+					<< "  Counter: " << dec << 0 << CYAN <<"  --Not In mmap--" 
+					<< RESET << endl;
+			}
+			cout << endl;
+			count++;
+			loc++;
+		}
+		last_time_looked_at = finish_here;
+	}
+  */
+  //parse the L1, L2, L3 args
+  void parse(char* l1, char* l2, char* l3) {
+    string tmp_str;
+    string l1_str(l1);
+    string l2_str(l2);
+    string l3_str(l3);
+    stringstream l1_s_str(l1_str);
+    stringstream l2_s_str(l2_str);
+    stringstream l3_s_str(l3_str);
+
+    //phase_1
+    getline(l1_s_str, tmp_str, ',');
+    total_data_size_phase_1 = pow(2,stol(tmp_str));
+    getline(l1_s_str, tmp_str, ',');
+    region_size_phase_1 = pow(2, stol(tmp_str));
+    getline(l1_s_str, tmp_str, ',');
+    counter_size_phase_1 = stol(tmp_str);
+    cache_size_phase_1 = (total_data_size_phase_1/region_size_phase_1)*(counter_size_phase_1/8);
+    
+    //phase_2
+    getline(l2_s_str, tmp_str, ',');
+    total_data_size_phase_2 = pow(2, stol(tmp_str));
+    getline(l2_s_str, tmp_str, ',');
+    region_size_phase_2 = pow(2, stol(tmp_str));
+    getline(l2_s_str, tmp_str, ',');
+    counter_size_phase_2 = stol(tmp_str);
+    
+    //phase_3
+    getline(l3_s_str, tmp_str, ',');
+    total_data_size_phase_3 = pow(2, stol(tmp_str));
+    getline(l3_s_str, tmp_str, ',');
+    region_size_phase_3 = pow(2, stol(tmp_str));
+    getline(l3_s_str, tmp_str, ',');
+    counter_size_phase_3 = stol(tmp_str);
+  }
+};
+
+int main(int argc, char* argv[]) {
+	int i;  //for looping
+	int opt; 
+	int ver = 0;
+	int long_index = 0;
+  float inter;
+  char* l1;
+  char* l2;
+  char* l3;
+
+	static struct option long_options[] = {
+		{      "L1", 	required_argument,  0,  'a' },
+		{      "L2", 	required_argument,  0,  'b' },
+		{      "L3",  required_argument,  0,  'c' },
+		{"interval", 	required_argument,  0,  'i' },
+		{ "verbose", 	      no_argument,  0,  'v' },
+		{         0,                  0,  0,   0  }
+	};
+	
+  /*
+  //grab the command line arguments
+	if(argc != 7){
+		printf("Usage: cache_size(Bytes), counter_size(Bits), keep_percentage(100%), interval(s), verbose(0=N/1=Y), dataset_name(.csv)\n");
+		exit(0);
+	}
+  */
+      
+	// put ':' in the starting of the 
+	// string so that program can  
+	//distinguish between '?' and ':'  
+	while((opt = getopt_long(argc, argv, ":a:b:c:i:v", long_options, &long_index)) != -1)  
+	{  
+		switch(opt)  
+		{  
+			case 'v':
+        ver = 1;
+        break;
+			case 'i':  
+				inter = atof(optarg);  
+				break;  
+			case 'a':  
+        l1 = optarg;
+				break;  
+			case 'b':  
+        l2 = optarg;
+				break;  
+			case 'c':  
+        l3 = optarg;
+				break;  
+			case ':':  
+				printf("option needs a value\n");  
+				break;  
+			case '?':  
+				printf("unknown option: %c\n", optopt); 
+				break;  
+		}  
+	}  
+		
+	// optind is for the extra arguments 
+	// which are not parsed 
+	for(; optind < argc; optind++){      
+		printf("extra arguments: %s\n", argv[optind]);  
+	} 
+		
+	Global G;
+  G.parse(l1, l2, l3);
+  G.interval = inter;
+  G.verbose = ver;
+	
+	//set debugging to off
+	G.debug = 0;
+	
+  /*
+	//create the map from the dataset 
+	cout << "Convert Dataset and Calculate Parameters" << endl;
+    string line;
+    double time;
+    string phys_addr;
+    stringstream iss;
+    string token;
+    int where;
+
+    //read in dataset
+    ifstream myfile(G.dataset_name);
+    if(myfile.is_open()){
+        getline(myfile, line); //remove column names
+
+		//grab line
+        while(getline(myfile, line)){
+            iss << line;
+            where = 0;
+
+			//parse for ","
+            while(getline(iss, token, ',')){
+                if(where == 0){
+                    time = stod(token, nullptr);
+                }else if(where == 1){
+					phys_addr = token;
+                }
+                where++;
+            }
+			//add to map
+			if(phys_addr < G.first_address) G.first_address = phys_addr;
+			if(phys_addr > G.last_address) G.last_address = phys_addr;
+            G.ds.insert(pair<double, string>(time, phys_addr));
+            iss.clear();
+        }
+    }
+	myfile.close();	
+  */
+  
+  /*
+	//calculations
+	G.total_address_space = G.calc_size_space(G.first_address, G.last_address);
+	G.rounded_total_address_space = G.round_next_pwr(G.total_address_space);
+	G.f_last_address = G.calc_final_address(G.rounded_total_address_space, G.first_address);
+	G.num_cache_regions = ceil(G.cache_size*(8/(double)G.counter_size));
+	
+	//phase 1
+	G.total_data_size_phase_1 = G.rounded_total_address_space;
+	G.region_size_phase_1 = ceil(G.total_data_size_phase_1/G.num_cache_regions);
+
+	//phase 2
+	G.total_data_size_phase_2 = ceil(G.total_data_size_phase_1*(G.keep_percentage/100));
+	G.region_size_phase_2 = ceil(G.total_data_size_phase_2/G.num_cache_regions);
+
+	//phase 3
+	G.total_data_size_phase_3 = ceil(4096*G.num_cache_regions);
+	G.region_size_phase_3 = 4096;
+
+	G.first_time = (G.ds.begin())->first;
+	G.last_time = (G.ds.rbegin())->first;
+	G.timespan = G.last_time-G.first_time;
+	G.num_itter = ceil(G.timespan/G.interval);
+
+	//mmap calculations	
+	//phase 2
+	G.phase_2_mmap_cache_bits = ceil(log2(G.num_cache_regions)); 
+	G.phase_2_mmap_region_zeros = ceil(log2(G.region_size_phase_2));
+	//assume all addresses are 64 bits ###############################################################
+	G.phase_2_mmap_region_bits = ceil(log2(G.total_data_size_phase_1))-G.phase_2_mmap_region_zeros;
+	
+	//phase 3
+	G.phase_3_mmap_cache_bits = ceil(log2(G.num_cache_regions)); 
+	G.phase_3_mmap_region_zeros = ceil(log2(G.region_size_phase_3));
+	G.phase_3_mmap_region_bits = ceil(log2(G.total_data_size_phase_1))-G.phase_3_mmap_region_zeros;
+	
+	//initialize the cache
+	G.init();	
+	
+	//initialize the loop vars
+	G.loc = G.ds.begin();
+	G.last_time_looked_at = G.first_time;
+  */
+    int counter_size_phase_1; //size of the number of bits in for the counter in the phase 1 cache
+    int counter_size_phase_2; //size of the number of bits in for the counter in the phase 2 cache
+    int counter_size_phase_3; //size of the number of bits in for the counter in the phase 3 cache
+    long cache_size_phase_1; //size of the cache in bits for phase 1
+    long cache_size_phase_2; //size of the cache in bits for phase 2
+    long cache_size_phase_3; //size of the cache in bits for phase 3
+		long total_data_size_phase_1; //size of the total amount of data in phase 1
+		long total_data_size_phase_2; //size of the total amount of data in phase 2
+		long total_data_size_phase_3; //size of the total amount of data in phase 3
+		long region_size_phase_1; //size of each region in phase 1
+		long region_size_phase_2; //size of each region in phase 2
+		long region_size_phase_3; //size of each region in phase 3
+		vector<boost::dynamic_bitset<>> phase_1_cache; //the cache for phase 1
+		vector<boost::dynamic_bitset<>> phase_2_cache; //the cache for phase 2
+		vector<boost::dynamic_bitset<>> phase_3_cache; //the cache for phase 3
+		
+		//datastructures for memory map
+		int phase_2_mmap_cache_bits; //number of bits needed in the mmap to offset into the cache
+		int phase_3_mmap_cache_bits; //number of bits needed in the mmap to offset into the cache
+		int phase_2_mmap_region_bits; //number of bits needed in the mmap to figure out which region this belongs to
+		int phase_3_mmap_region_bits; //number of bits needed in the mmap to figure out which region this belongs to
+		int phase_2_mmap_region_zeros; //number of bits needed in the mmap to pad the address with zeros
+		int phase_3_mmap_region_zeros; //number of bits needed in the mmap to pad the address with zeros
+		typedef decltype(boost::dynamic_bitset<>(1)) cache_offset;
+		typedef decltype(boost::dynamic_bitset<>(1)) mmu_offset;
+		map<mmu_offset, cache_offset> phase_2_mmap; //the memory map for phase 2
+		map<mmu_offset, cache_offset> phase_3_mmap; //the memory map for phase 3
+
+	//print variables
+	if(G.verbose){
+    pair<string, string> tmp;
+		cout << endl;
+		cout << RESET << fixed << "Time between heatmapings: " << GREEN << G.interval 
+			 << MAGENTA << " Seconds" << endl;
+    cout << endl;
+
+		cout << CYAN << "PHASE 1" << endl;
+    tmp = G.get_log2_size(G.total_data_size_phase_1);
+		cout << RESET << "Total_data_size_phase_1: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.total_data_size_phase_1 << MAGENTA 
+       << " Bytes" << endl;
+    tmp = G.get_log2_size(G.cache_size_phase_1);
+    cout << RESET << "Size_of_phase_1_cache: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.cache_size_phase_1 << MAGENTA
+       << " Bytes" << endl;
+    tmp = G.get_log2_size(G.region_size_phase_1);
+		cout << RESET << "Region_size_phase_1: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.region_size_phase_1 << MAGENTA 
+       << " Bytes" << endl;
+		cout << endl;
+
+		cout << CYAN << "PHASE 2" << endl;
+    tmp = G.get_log2_size(G.total_data_size_phase_2);
+		cout << RESET << "Total_data_size_phase_2: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.total_data_size_phase_2 << MAGENTA 
+       << " Bytes" << endl;
+    tmp = G.get_log2_size(G.region_size_phase_2);
+		cout << RESET << "Region_size_phase_2: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.region_size_phase_2 << MAGENTA 
+       << " Bytes" << endl;
+		cout << RESET << "Number of bits to address cache in mmap for phase_2: " 
+			 << GREEN << G.phase_2_mmap_cache_bits << MAGENTA << " Bits" << endl;
+		cout << RESET << "Number of zeros in address region in mmap for phase_2: " 
+			 << GREEN << G.phase_2_mmap_region_zeros << MAGENTA << " Bits" << endl;
+		cout << RESET << "Number of bits to address region in mmap for phase_2: " 
+			 << GREEN << G.phase_2_mmap_region_bits << MAGENTA << " Bits" << endl;
+		cout << endl;
+
+		cout << CYAN << "PHASE 3" << endl;
+    tmp = G.get_log2_size(G.total_data_size_phase_3);
+		cout << RESET << "Total_data_size_phase_3: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.total_data_size_phase_3 << MAGENTA 
+       << " Bytes" << endl;
+    tmp = G.get_log2_size(G.region_size_phase_3);
+		cout << RESET << "Region_size_phase_3: " << GREEN << tmp.first << MAGENTA 
+       << tmp.second << "   " << GREEN << G.region_size_phase_3 << MAGENTA << " Bytes" 
+       <<  endl;
+		cout << RESET << "Number of bits to address cache in mmap for phase_3: " 
+			 << GREEN << G.phase_3_mmap_cache_bits << MAGENTA << " Bits" << endl;
+		cout << RESET << "Number of zeros in address region in mmap for phase_3: " 
+			 << GREEN << G.phase_3_mmap_region_zeros << MAGENTA << " Bits" << endl;
+		cout << RESET << "Number of bits to address region in mmap for phase_3: " 
+			 << GREEN << G.phase_3_mmap_region_bits << MAGENTA << " Bits" << endl;
+		cout << RESET << endl;
+	}
+  /*4
+	//start heatmapping
+	//for(i=0; i<G.num_itter; i++){
+	for(i=1; i<2; i++){
+		if(G.verbose) cout << endl << endl << GREEN << "Start Run: " 
+			             << RESET << i << endl;
+		G.run();
+	}
+  */
+	exit(0);
+}
