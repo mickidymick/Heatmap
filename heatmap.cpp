@@ -40,6 +40,20 @@ class Global {
 		//for creating the map from the dataset
 		uint64_t first_address_as_uint64_t;
 
+    //for calculating correctness
+    uint64_t phase_1_cache_hits = 0; //number of cache hits for the first level
+    uint64_t phase_2_cache_hits = 0; //number of cache hits for the second level
+    uint64_t phase_3_cache_hits = 0; //number of cache hits for the third level
+    uint64_t phase_1_cache_misses = 0; //number of cache misses for the first level
+    uint64_t phase_2_cache_misses = 0; //number of cache misses for the second level
+    uint64_t phase_3_cache_misses = 0; //number of cache misses for the third level
+    uint64_t phase_1_counter_inc = 0; //number of time a counter in the cache was incremented first level
+    uint64_t phase_2_counter_inc = 0; //number of time a counter in the cache was incremented second level
+    uint64_t phase_3_counter_inc = 0; //number of time a counter in the cache was incremented third level
+    uint64_t phase_1_counter_dec = 0; //number of time a counter in the cache was decremented first level
+    uint64_t phase_2_counter_dec = 0; //number of time a counter in the cache was decremented second level
+    uint64_t phase_3_counter_dec = 0; //number of time a counter in the cache was decremented third level
+
 		//datastructures for cache
     int num_region_bits_phase_1; //number of bits needed to address all addresses in region
     int num_region_bits_phase_2; //number of bits needed to address all addresses in region
@@ -104,29 +118,6 @@ class Global {
       return make_pair(s_num, s_type);
     }
   }
-  /*
-  //Finds the highest power of 2
-	uint64_t round_next_pwr(uint64_t v){
-		v--;
-		v |= v >> 1;
-		v |= v >> 2;
-		v |= v >> 4;
-		v |= v >> 8;
-		v |= v >> 16;
-		v++;
-		return v;
-	}
-	
-	//converts an address as a uint64_t to a string
-	string uint64_t_to_string(uint64_t address) {
-		stringstream ss;
-		string address_str;
-
-		ss << hex << address;
-		ss >> address_str;
-		return address_str;
-	}
-  */
 
 	//Converts an address as a string to a uint64_t
 	uint64_t string_to_uint64_t(string address) {
@@ -138,67 +129,6 @@ class Global {
 		return address_uint64_t;
 	}
 
-  /*
-	//calculates the total amount of bytes
-	uint64_t calc_size_space(string first_address, string last_address) {
-		uint64_t first_address_uint64_t;
-		uint64_t last_address_uint64_t;
-		
-		first_address_uint64_t = string_to_uint64_t(first_address);
-		last_address_uint64_t = string_to_uint64_t(last_address);
-		
-		return  last_address_uint64_t - first_address_uint64_t;
-	}
-
-	//calculate the last address with the added rounding
-	string calc_final_address(uint64_t space_size, string first_address) {
-		uint64_t first_address_int;
-		uint64_t last_address_int;
-		char hex_string[17];
-		int calc = 0;
-		int loc = 0;
-		bool first = true;
-		int end = 15;
-		stringstream ss;
-		
-		ss << hex << first_address;
-		ss >> first_address_int;
-		ss.clear();
-	
-		first_address_as_uint64_t = first_address_int;
-
-		for(int i=0; i<16; i++) {
-			hex_string[i] = -1;
-		}
-
-		last_address_int = first_address_int + space_size;
-		ss << hex << last_address_int;
-		ss >> hex_string;
-
-		for(int i=0; i<16; i++) {
-			if(hex_string[i] == '\0'){
-				if(first){
-					first = false;
-					loc = i;
-				}
-				calc++;
-			}
-		}
-		if(calc == 1){
-			for(int i=loc-1; i>=0; i--){
-				hex_string[end] = tolower(hex_string[i]);
-				end--;
-			}
-			for(int i=0; i<end+1; i++){
-				hex_string[i] = '0';
-			}
-		}
-		hex_string[16] = '\0';
-
-		return  hex_string;
-	}
-
-  */
 	//convert the counter to a uint64_t
 	int to_uint64_t(int phase, uint64_t offset) {
 		uint64_t ret = 0;
@@ -249,7 +179,7 @@ class Global {
 					phase_3_cache[offset][counter_size-i-1] = ((value>>i)&1);
 				}
 			}   
-			//if(debug)cout << "Counter: " << GREEN << to_uint64_t(1, offset) << RESET << endl;
+			if(debug)cout << "Counter: " << GREEN << to_uint64_t(1, offset) << RESET << endl;
 			return 1;
 		}else{
 			return 0;
@@ -274,7 +204,7 @@ class Global {
 			return ceil(address_uint64_t/region_size_phase_1);
 		}else if(phase == 2) {
 			//convert address to bitset for lookup in mmap
-			if(1) cout << "Address uint64_t: " << address_uint64_t << "  Address Hex: " 
+			if(debug) cout << "Address uint64_t: " << address_uint64_t << "  Address Hex: " 
 				 << hex << address_uint64_t << dec << endl;
 			address_uint64_t = address_uint64_t >> phase_2_mmap_region_zeros;
 			boost::dynamic_bitset<> tmp_bitset_r(phase_2_mmap_region_bits);
@@ -283,49 +213,56 @@ class Global {
 				test_a |= tmp_bitset_r[phase_2_mmap_region_bits-i-1]<<i;
 			}
 			//for printing
-			if(1) cout << "tmp_bitset_r: " << fixed << test_a << "  Hex: " << hex << test_a 
+			if(debug) cout << "tmp_bitset_r: " << fixed << test_a << "  Hex: " << hex << test_a 
 				 << dec << endl;
 
 			//find in mmap and convert from bitset to uint64_t
 			boost::dynamic_bitset<> tmp_bitset_c(phase_2_mmap_cache_bits);
 			p2_mmap_itter = phase_2_mmap.find(tmp_bitset_r);
 			if(p2_mmap_itter == phase_2_mmap.end()) {
-				cout << RED << "Address not found in phase_2_mmap" << RESET << endl;
+				if(debug) cout << RED << "Address not found in phase_2_mmap" << RESET << endl;
         return -1;
       }else{
 				tmp_bitset_c = p2_mmap_itter->second;
         for(i=0; i<phase_2_mmap_cache_bits; i++) {
           offset |= (tmp_bitset_c[phase_2_mmap_cache_bits-i-1]<<i); 
         }
-        ////////////////////
-        /*
-          boost::dynamic_bitset<> tmp_cache(phase_2_mmap_cache_bits);
-          for(j=0; j<phase_2_mmap_cache_bits; j++) {
-            print_l_c |= (tmp_cache[phase_2_mmap_cache_bits-j-1]<<j);
-          }
-        */
-        ////////////////////
-				cout << GREEN << "Address found--  Index" << MAGENTA << tmp_bitset_c << RESET "  Long: " << GREEN << offset << RESET << endl;
+				if(debug) cout << GREEN << "Address found--  Index" << MAGENTA << tmp_bitset_c << RESET "  Long: " << GREEN << offset << RESET << endl;
         return offset;
 			}
 
 		}else if(phase == 3) {
-
-		}
-	}
-
-  /*
-	//calculate if the counter is maxed out
-	bool is_not_maxed(int* c_ptr) {
-		int i; //for looping
-		for(i=0; i<counter_size; i++) {
-			if(!((*c_ptr)&(1UL<<i))) {
-				return true;
+			//convert address to bitset for lookup in mmap
+			if(debug) cout << "Address uint64_t: " << address_uint64_t << "  Address Hex: " 
+				 << hex << address_uint64_t << dec << endl;
+			address_uint64_t = address_uint64_t >> phase_3_mmap_region_zeros;
+			boost::dynamic_bitset<> tmp_bitset_r(phase_3_mmap_region_bits);
+			for(i=0; i<phase_3_mmap_region_bits; i++) {
+				tmp_bitset_r[phase_3_mmap_region_bits-i-1] = ((address_uint64_t)>>i)&1;
+				test_a |= tmp_bitset_r[phase_3_mmap_region_bits-i-1]<<i;
 			}
+			//for printing
+			if(debug) cout << "tmp_bitset_r: " << fixed << test_a << "  Hex: " << hex << test_a 
+				 << dec << endl;
+
+			//find in mmap and convert from bitset to uint64_t
+			boost::dynamic_bitset<> tmp_bitset_c(phase_3_mmap_cache_bits);
+			p3_mmap_itter = phase_3_mmap.find(tmp_bitset_r);
+			if(p3_mmap_itter == phase_3_mmap.end()) {
+				if(debug) cout << RED << "Address not found in phase_2_mmap" << RESET << endl;
+        return -1;
+      }else{
+				tmp_bitset_c = p3_mmap_itter->second;
+        for(i=0; i<phase_3_mmap_cache_bits; i++) {
+          offset |= (tmp_bitset_c[phase_3_mmap_cache_bits-i-1]<<i); 
+        }
+				if(debug) cout << GREEN << "Address found--  Index" << MAGENTA << tmp_bitset_c << RESET "  Long: " << GREEN << offset << RESET << endl;
+        return offset;
+			}
+
 		}
-		return false;
+    return -1;
 	}
-  */
 
 	//##### main functions #####
 	//initilize the maps and vectors
@@ -341,91 +278,8 @@ class Global {
 		//initialize phase_3_cache
 		vector<boost::dynamic_bitset<>> tmp_3(num_cache_regions_phase_3, boost::dynamic_bitset<>(counter_size_phase_3));
         phase_3_cache = tmp_3;
-
-    /*
-
-    */
 	}
-
-  /*
-	//iterate over the data set for a single interval amount of time and increment 
-	//the counters for all three runs
-	void run() {
-		double finish_here = last_time_looked_at + interval;
-		uint64_t offset;
-		uint64_t p1_add_offset;
-		int count = 0;
-		uint64_t counter;
-		boost::dynamic_bitset<> counter_bitset(counter_size);
-
-		//TEST#####################
-		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_region_bits)) p2_mmu_offset_size;
-		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_cache_bits)) p2_cache_offset_size;
-		map<p2_mmu_offset_size, p2_cache_offset_size>::iterator p2_mmap_itter; //the memory map itterator
-		p2_mmu_offset_size first_b;
-		p2_cache_offset_size second_b;
-		uint64_t first = 0;
-		uint64_t second = 0;
-		p2_mmap_itter = phase_2_mmap.begin();
-		if(p2_mmap_itter != phase_2_mmap.end()){
-			cout << GREEN << "GOOD" << RESET << endl;
-		}else{
-			cout << RED << "BAD" << RESET << endl;
-		}
-		first_b = p2_mmap_itter->first;
-		second_b = p2_mmap_itter->second;
-		for(int i=0; i<phase_2_mmap_region_bits; i++) {
-			first |= (first_b[phase_2_mmap_region_bits-i-1])<<i;
-			cout << "i=" << i << " First: " << first_b[i] << endl;
-		}
-		for(int i=0; i<phase_2_mmap_cache_bits; i++) {
-			second |= (second_b[phase_2_mmap_cache_bits-i-1])<<i;
-			cout << "i=" << i << " Second: " << second_b[i] << endl;
-		}
-		cout << "First in map: " << first << ", " << hex << first << "  Second: " << dec << second << ", " <<  hex << second << endl;
-		exit(0);
-		//TEST#####################
-		
-		while(loc->first <= finish_here) {
-			//phase_1
-			offset = find_offset(1, loc->second);
-			counter_bitset = phase_1_cache[offset];
-			counter = to_uint64_t(1, offset);
-			if(increment(1, offset)) {
-				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
-					<< "  Counter: " << dec << counter << endl;
-			}else{
-				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
-					<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
-					<< RESET << endl;
-			}
-
-			//phase_2
-			offset = find_offset(2, loc->second);
-			if(offset != -1) {
-				cout << "P2 Offset: " << GREEN << offset << RESET << endl;
-				counter_bitset = phase_2_cache[offset];
-				counter = to_uint64_t(2, offset);
-				if(increment(2, offset)) {
-					if(verbose) cout << GREEN << "Phase 2" << "  Offset: " << fixed << hex << offset 
-						<< "  Counter: " << dec << counter << endl;
-				}else{
-					if(verbose) cout << GREEN << "Phase 2" << "  Offset: " << fixed << hex << offset 
-						<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
-						<< RESET << endl;
-				}
-			}else{
-				if(verbose) cout << "Phase 2" << "  Offset: " << fixed << hex << 0 
-					<< "  Counter: " << dec << 0 << CYAN <<"  --Not In mmap--" 
-					<< RESET << endl;
-			}
-			cout << endl;
-			count++;
-			loc++;
-		}
-		last_time_looked_at = finish_here;
-	}
-  */
+  
   //parse the L1, L2, L3 args
   void parse(char* l1, char* l2, char* l3) {
     string tmp_str;
@@ -472,7 +326,7 @@ class Global {
   }
 
   //increment the counter in the cache of the desired phase
-  void change_counter(int phase, uint64_t offset) {
+  bool change_counter(int phase, uint64_t offset) {
     uint64_t counter;
 
     //phase 1
@@ -481,13 +335,15 @@ class Global {
       counter_bitset = phase_1_cache[offset];
 			if(increment(1, offset)) {
         counter = to_uint64_t(1, offset);
-				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 1" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << endl;
+        return true;
 			}else{
         counter = to_uint64_t(1, offset);
-				if(verbose) cout << "Phase 1" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 1" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
 					<< RESET << endl;
+        return false;
 			}
     //phase 2
     }else if(phase == 2) {
@@ -495,13 +351,15 @@ class Global {
       counter_bitset = phase_2_cache[offset];
 			if(increment(2, offset)) {
         counter = to_uint64_t(2, offset);
-				if(1) cout << "Phase 2" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 2" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << endl;
+        return true;
 			}else{
         counter = to_uint64_t(2, offset);
-				if(1) cout << "Phase 2" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 2" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
 					<< RESET << endl;
+        return false;
       }
     //phase 3
     }else {
@@ -509,13 +367,15 @@ class Global {
       counter_bitset = phase_3_cache[offset];
 			if(increment(3, offset)) {
         counter = to_uint64_t(3, offset);
-				if(verbose) cout << "Phase 3" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 3" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << endl;
+        return true;
 			}else{
         counter = to_uint64_t(3, offset);
-				if(verbose) cout << "Phase 3" << "  Offset: " << hex << offset 
+				if(debug) cout << "Phase 3" << "  Offset: " << hex << offset 
 					<< "  Counter: " << dec << counter << RED <<"  --FULL--" 
 					<< RESET << endl;
+        return false;
       }
     }
   }
@@ -527,6 +387,7 @@ class Global {
     typedef pair<uint64_t, uint64_t> pairs; //to add to sets (the number, the index)
     vector<pairs> max; //maximum number found
     uint64_t index = 0;
+    uint64_t region = 0;
     uint64_t num; //number to check size of 
     uint64_t num_regions_needed_phase_2; //number of regions of phase1 to fill phase2
     uint64_t num_regions_needed_phase_3; //number of regions of phase2 to fill phase3
@@ -542,57 +403,145 @@ class Global {
 		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_region_bits)) p3_mmu_offset_size;
 		typedef decltype(boost::dynamic_bitset<>(phase_2_mmap_cache_bits)) p2_cache_offset_size;
 		typedef decltype(boost::dynamic_bitset<>(phase_3_mmap_cache_bits)) p3_cache_offset_size;
-    /*
+		map<p2_mmu_offset_size, p2_cache_offset_size>::iterator p2_mmap_itter; //the memory map itterator
+		boost::dynamic_bitset<> tmp_bitset_r(phase_2_mmap_region_bits);
+		boost::dynamic_bitset<> tmp_bitset_c(phase_2_mmap_cache_bits);
+    
     //phase 3
     if(iteration >= 2) {
-      //initialize phase_3_mmap
-      incr_address = pow(2, phase_3_mmap_region_zeros);
-      add_address = (first_address_as_uint64_t >> phase_3_mmap_region_zeros);
-      
-      for(i=0; i<num_cache_regions_phase_3; i++) {
-        boost::dynamic_bitset<> tmp_offset(phase_3_mmap_region_bits);
-        print_l_r = 0;
-        print_l_c = 0;
-        for(j=0; j<phase_3_mmap_region_bits; j++) {
-          tmp_offset[phase_3_mmap_region_bits-j-1] = ((add_address>>j)&1);
-          print_l_r |= (tmp_offset[phase_3_mmap_region_bits-j-1]<<j);
-        }
+      //clear mmap and cache
+      phase_3_mmap.clear();
+      max.clear();
+      done = false;
 
-        boost::dynamic_bitset<> tmp_cache(phase_3_mmap_cache_bits);
-        for(j=0; j<phase_3_mmap_cache_bits; j++) {
-          tmp_cache[phase_3_mmap_cache_bits-j-1] = ((i>>j)&1);
-          print_l_c |= (tmp_cache[phase_3_mmap_cache_bits-j-1]<<j);
+      //calculate number of regions to accuire
+      num_regions_needed_phase_3 = total_data_size_phase_3/region_size_phase_2;
+    
+      p2_mmap_itter = phase_2_mmap.begin();
+      //find hot regions in phase 2
+      for(i=0; i<num_cache_regions_phase_2; i++) {
+        tmp_bitset_r = p2_mmap_itter->first;
+        tmp_bitset_c = p2_mmap_itter->second;
+        p2_mmap_itter++;
+        region = 0;
+        for(j=0; j<phase_2_mmap_region_bits; j++) {
+          region |= (tmp_bitset_r[phase_2_mmap_region_bits-j-1]<<j); 
         }
-        if(debug) cout << "Phase 3 mmap-> " << "Offset: " << fixed << hex << print_l_r 
-          << ", " << dec << print_l_r << " -- Cache: " << fixed << hex << print_l_c 
-          << ", " << dec << print_l_c << endl;
-        phase_3_mmap.insert(pair<p3_mmu_offset_size, p3_cache_offset_size>(tmp_offset, tmp_cache));
-        address += incr_address; 
-        add_address = (address >> phase_3_mmap_region_zeros);
+        region = region << phase_2_mmap_region_zeros;
+        
+        index = 0;
+        for(j=0; j<phase_2_mmap_cache_bits; j++) {
+          index |= (tmp_bitset_c[phase_2_mmap_cache_bits-j-1]<<j); 
+        }
+        num = to_uint64_t(2, index);
+        if(debug) cout << "iter: " << GREEN << i << RESET << "  addr: " << GREEN << region << RESET <<"  index: " 
+             << GREEN << index << RESET << "  num: " << GREEN << num << RESET << endl;
+        
+        if(max.size() < num_regions_needed_phase_3) {
+          max.push_back(make_pair(num, region));
+        }else{
+          for(j=0; j<max.size(); j++) {
+            if(max[j].first < num) {
+              if(debug) cout << MAGENTA << "OLD" << RESET << "  index: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << endl;
+              if(debug) cout << MAGENTA << "NEW" << RESET << "  index: " << GREEN << index << RESET 
+                   << "  num: " << GREEN << num << RESET << endl;
+              max[j] = make_pair(num, region);
+              break;
+            }
+          }
+        }
+        if(max.size() == num_regions_needed_phase_3) {
+          for(j=0; j<max.size(); j++) {
+            if(max[j].first != (pow(2, counter_size_phase_2)-1)){
+              if(debug) cout << "reg_bits: " << counter_size_phase_1 << endl;
+              if(debug) cout << "max: " << (pow(2, counter_size_phase_1)-1) << endl;
+              if(debug) cout << MAGENTA << "SMALL" << RESET << "  index: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
+              if(debug) cout << endl;
+              break;  
+            }else if(j == max.size()-1){
+              if(debug) cout << MAGENTA << "BIG" << RESET << "  index: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
+              done = true;
+              if(debug) cout << endl;
+            }
+          }
+        }
+        if(done){
+          break;
+        }
+      }
+      if(debug) {
+        cout << "Size: " << GREEN << max.size() << RESET << endl;
+        cout << "Max: ";
+        for(i=0; i<max.size(); i++) {
+          cout << "(" << GREEN << max[i].first << RESET << "," << MAGENTA << max[i].second << RESET << ")  ";
+        }
+        cout << endl;
+      }
+
+      num_regions_per_phase_3 = region_size_phase_2/region_size_phase_3;
+      index = 0;
+
+      //set up phase_3_mmap
+      for(i=0; i<max.size(); i++) {
+        if(debug) cout << MAGENTA << "START: " << GREEN << fixed << hex << max[i].second << RESET << endl;
+        start_addr = max[i].second;
+        start_addr = start_addr>>phase_3_mmap_region_zeros;
+        if(debug) cout << MAGENTA << "BEGIN: " << GREEN << start_addr << RESET << "  Hex: " 
+          << GREEN << fixed << hex << start_addr << RESET << endl;
+        
+        //add sub regions to phase_3_mmap from single region in phase 1
+        for(k=0; k<num_regions_per_phase_3; k++) {
+          boost::dynamic_bitset<> tmp_offset(phase_3_mmap_region_bits);
+          print_l_r = 0;
+          print_l_c = 0;
+          for(j=0; j<phase_3_mmap_region_bits; j++) {
+            tmp_offset[phase_3_mmap_region_bits-j-1] = ((start_addr>>j)&1);
+            print_l_r |= (tmp_offset[phase_3_mmap_region_bits-j-1]<<j);
+          }
+
+          boost::dynamic_bitset<> tmp_cache(phase_3_mmap_cache_bits);
+          for(j=0; j<phase_3_mmap_cache_bits; j++) {
+            tmp_cache[phase_3_mmap_cache_bits-j-1] = ((index>>j)&1);
+            print_l_c |= (tmp_cache[phase_3_mmap_cache_bits-j-1]<<j);
+          }
+          
+          phase_3_mmap.insert(pair<p3_mmu_offset_size, p3_cache_offset_size>(tmp_offset, tmp_cache));
+
+          if(debug) cout << "Phase 3 mmap-> " << "Address: " << fixed << hex << print_l_r 
+            << ", " << dec << print_l_r << " -- Cache_Index: " << fixed << hex << print_l_c 
+            << ", " << dec << print_l_c << endl;
+          
+          index++;
+          start_addr += 1;
+        }
       }
     }
-    */
+
     //phase 2
     if(iteration >= 1) {
       //clear mmap and cache
       phase_2_mmap.clear();
-
+      max.clear();
+      done = false;
 
       //calculate number of regions to accuire
       num_regions_needed_phase_2 = total_data_size_phase_2/region_size_phase_1;
       //find hot regions in phase 1
       for(i=0; i<num_cache_regions_phase_1; i++) {
         num = to_uint64_t(1, i);
-        //cout << "iter: " << GREEN << i << RESET << "  num: " << GREEN << num << RESET << endl;
+        if(debug) cout << "iter: " << GREEN << i << RESET << "  num: " << GREEN << num << RESET << endl;
         if(max.size() < num_regions_needed_phase_2) {
           max.push_back(make_pair(num, i));
         }else{
           for(j=0; j<max.size(); j++) {
             if(max[j].first < num) {
-              //cout << MAGENTA << "OLD" << RESET << "  iter: " << GREEN << max[j].second 
-              //     << RESET << "  num: " << GREEN << max[j].first << endl;
-              //cout << MAGENTA << "NEW" << RESET << "  iter: " << GREEN << i << RESET 
-              //     << "  num: " << GREEN << num << RESET << endl;
+              if(debug) cout << MAGENTA << "OLD" << RESET << "  iter: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << endl;
+              if(debug) cout << MAGENTA << "NEW" << RESET << "  iter: " << GREEN << i << RESET 
+                   << "  num: " << GREEN << num << RESET << endl;
               max[j] = make_pair(num, i);
               break;
             }
@@ -601,14 +550,14 @@ class Global {
         if(max.size() == num_regions_needed_phase_2) {
           for(j=0; j<max.size(); j++) {
             if(max[j].first != (pow(2, counter_size_phase_1)-1)){
-              //cout << "reg_bits: " << counter_size_phase_1 << endl;
-              //cout << "max: " << (pow(2, counter_size_phase_1)-1) << endl;
-              //cout << MAGENTA << "SMALL" << RESET << "  iter: " << GREEN << max[j].second 
-              //     << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
+              if(debug) cout << "reg_bits: " << counter_size_phase_1 << endl;
+              if(debug) cout << "max: " << (pow(2, counter_size_phase_1)-1) << endl;
+              if(debug) cout << MAGENTA << "SMALL" << RESET << "  iter: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
               break;  
             }else if(j == max.size()-1){
-              //cout << MAGENTA << "BIG" << RESET << "  iter: " << GREEN << max[j].second 
-              //     << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
+              if(debug) cout << MAGENTA << "BIG" << RESET << "  iter: " << GREEN << max[j].second 
+                   << RESET << "  num: " << GREEN << max[j].first << RESET << endl;
               done = true;
             }
           }
@@ -618,23 +567,24 @@ class Global {
         }
       }
    
-      cout << "Size: " << GREEN << max.size() << RESET << endl;
-      cout << "Max: ";
-      for(i=0; i<max.size(); i++) {
-        cout << "(" << GREEN << max[i].first << RESET << "," << MAGENTA << max[i].second << RESET << ")  ";
+      if(debug) {
+        cout << "Size: " << GREEN << max.size() << RESET << endl;
+        cout << "Max: ";
+        for(i=0; i<max.size(); i++) {
+          cout << "(" << GREEN << max[i].first << RESET << "," << MAGENTA << max[i].second << RESET << ")  ";
+        }
+        cout << endl;
       }
-      cout << endl;
 
       num_regions_per_phase_2 = region_size_phase_1/region_size_phase_2;
       index = 0;
 
       //set up phase_2_mmap
       for(i=0; i<max.size(); i++) {
-        cout << MAGENTA << "Offset: " << GREEN << max[i].second << RESET << endl;
-			  //return ceil(address_uint64_t/region_size_phase_1);
+        if(debug) cout << MAGENTA << "Offset: " << GREEN << max[i].second << RESET << endl;
         start_addr = (max[i].second)*region_size_phase_1;
         start_addr = start_addr>>phase_2_mmap_region_zeros;
-        cout << MAGENTA << "BEGIN: " << GREEN << start_addr << RESET << "  Hex: " 
+        if(debug) cout << MAGENTA << "BEGIN: " << GREEN << start_addr << RESET << "  Hex: " 
           << GREEN << fixed << hex << start_addr << RESET << endl;
         
         //add sub regions to phase_2_mmap from single region in phase 1
@@ -655,7 +605,7 @@ class Global {
           
           phase_2_mmap.insert(pair<p2_mmu_offset_size, p2_cache_offset_size>(tmp_offset, tmp_cache));
 
-          if(1) cout << "Phase 2 mmap-> " << "Address: " << fixed << hex << print_l_r 
+          if(debug) cout << "Phase 2 mmap-> " << "Address: " << fixed << hex << print_l_r 
             << ", " << dec << print_l_r << " -- Cache_Index: " << fixed << hex << print_l_c 
             << ", " << dec << print_l_c << endl;
           
@@ -887,45 +837,134 @@ int main(int argc, char* argv[]) {
           }else if(pause_time < time){
             pause_time = time + G.interval;
             cout << CYAN << "##########  Iteration: " << GREEN << iteration << RESET
-              << "   Timestamp: " << GREEN << time << RESET << endl << endl;
+              << "   Timestamp: " << GREEN << time << RESET << endl;
+            //phase_1 counters
+            cout << "Phase_1_cache_hits: " << GREEN << G.phase_1_cache_hits << RESET << "  Percentage: " 
+                 << MAGENTA << ((float)G.phase_1_cache_hits/(G.phase_1_cache_hits+G.phase_1_cache_misses))*100 
+                 << "%" << RESET << endl;
+            cout << "Phase_1_cache_misses: " << GREEN << G.phase_1_cache_misses << RESET << "  Percentage: " 
+                 << MAGENTA << ((float)G.phase_1_cache_misses/(G.phase_1_cache_hits+G.phase_1_cache_misses))*100 
+                 << "%" << RESET << endl;
+            cout << "Phase_1_counter_inc: " << GREEN << G.phase_1_counter_inc << RESET << "  Percentage: " 
+                 << MAGENTA << ((float)G.phase_1_counter_inc/(G.phase_1_counter_inc+G.phase_1_counter_dec))*100 
+                 << "%" << RESET << endl;
+            cout << "Phase_1_counter_dec: " << GREEN << G.phase_1_counter_dec << RESET << "  Percentage: " 
+                 << MAGENTA << ((float)G.phase_1_counter_dec/(G.phase_1_counter_inc+G.phase_1_counter_dec))*100 
+                 << "%" << RESET << endl;
+
+            //phase_2 counters
+            if(iteration >= 1) {
+              cout << endl;
+              cout << "Phase_2_cache_hits: " << GREEN << G.phase_2_cache_hits << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_2_cache_hits/(G.phase_2_cache_hits+G.phase_2_cache_misses))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_2_cache_misses: " << GREEN << G.phase_2_cache_misses << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_2_cache_misses/(G.phase_2_cache_hits+G.phase_2_cache_misses))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_2_counter_inc: " << GREEN << G.phase_2_counter_inc << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_2_counter_inc/(G.phase_2_counter_inc+G.phase_2_counter_dec))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_2_counter_dec: " << GREEN << G.phase_2_counter_dec << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_2_counter_dec/(G.phase_2_counter_inc+G.phase_2_counter_dec))*100 
+                  << "%" << RESET << endl;
+            }
+            
+            //phase_3 counters
+            if(iteration >= 2) {
+              cout << endl;
+              cout << "Phase_3_cache_hits: " << GREEN << G.phase_3_cache_hits << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_3_cache_hits/(G.phase_3_cache_hits+G.phase_3_cache_misses))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_3_cache_misses: " << GREEN << G.phase_3_cache_misses << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_3_cache_misses/(G.phase_3_cache_hits+G.phase_3_cache_misses))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_3_counter_inc: " << GREEN << G.phase_3_counter_inc << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_3_counter_inc/(G.phase_3_counter_inc+G.phase_3_counter_dec))*100 
+                  << "%" << RESET << endl;
+              cout << "Phase_3_counter_dec: " << GREEN << G.phase_3_counter_dec << RESET << "  Percentage: " 
+                  << MAGENTA << ((float)G.phase_3_counter_dec/(G.phase_3_counter_inc+G.phase_3_counter_dec))*100 
+                  << "%" << RESET << endl;
+            }
+            cout << endl;
             iteration++;
 
+            //clear counters
+            G.phase_1_cache_hits = 0;
+            G.phase_2_cache_hits = 0;
+            G.phase_3_cache_hits = 0;
+            G.phase_1_cache_misses = 0;
+            G.phase_2_cache_misses = 0;
+            G.phase_3_cache_misses = 0;
+            G.phase_1_counter_inc = 0;
+            G.phase_2_counter_inc = 0;
+            G.phase_3_counter_inc = 0;
+            G.phase_1_counter_dec = 0;
+            G.phase_2_counter_dec = 0;
+            G.phase_3_counter_dec = 0;
+
+            //quit early
+            //if(iteration == 3) exit(0);
+            
             //do a heatmaping of the current caches and cascade
             G.heatmap(iteration);
             
-            //quit early
-            if(iteration == 3) exit(0);
           }
 
           //change counters for this access
-          if(1) cout << RESET << "Timestamp: " << GREEN << time << MAGENTA << " seconds" << RESET << endl;
+          if(G.debug) cout << RESET << "Timestamp: " << GREEN << time << MAGENTA << " seconds" << RESET << endl;
           addr = G.string_to_uint64_t(phys_addr);
-          if(1) cout << RESET << "Address-- Hex:" << GREEN << fixed << hex << addr << RESET << "  uint64_t: " 
+          if(G.debug) cout << RESET << "Address-- Hex:" << GREEN << fixed << hex << addr << RESET << "  uint64_t: " 
             << GREEN << dec << addr << RESET << endl;
           
           //add to phase_1_cache counter
+          if(G.debug) cout << MAGENTA << "Phase_1 ->" << RESET << endl;
           index = G.find_offset(1, addr);
-          G.change_counter(1, index);
+          if(index != (uint64_t)-1) {
+            G.phase_1_cache_hits++;
+            if(G.change_counter(1, index)){
+              G.phase_1_counter_inc++;
+            }else{
+              G.phase_1_counter_dec++;
+            }
+          }else{
+            G.phase_1_cache_misses++;
+          }
 
           //add to phase_2_cache counter
           if(iteration >= 1) {
+            if(G.debug) cout << MAGENTA << "Phase_2 ->" << RESET << endl;
             index = G.find_offset(2, addr);
-            cout << "Index: " << GREEN << index << RESET << endl;
+            if(G.debug) cout << "Index: " << GREEN << index << RESET << endl;
             if(index != (uint64_t)-1) {
-              G.change_counter(2, index);
+              G.phase_2_cache_hits++;
+              if(G.change_counter(2, index)) {
+                G.phase_2_counter_inc++;
+              }else{ 
+                G.phase_2_counter_dec++;
+              }
+            }else{
+              G.phase_2_cache_misses++;
             }
-            cout << endl;
           }
 
           //add to phase_3_cache counter
           if(iteration >= 2) {
+            if(G.debug) cout << MAGENTA << "Phase_3 ->" << RESET << endl;
             index = G.find_offset(3, addr);
-            cout << "Index 3: " << GREEN << index << RESET << endl;
-            if(index > -1) {
-              G.change_counter(3, index);
+            if(G.debug) cout << "Index 3: " << GREEN << index << RESET << endl;
+            if(index != (uint64_t)-1) {
+              G.phase_3_cache_hits++;
+              if(G.change_counter(3, index)) {
+                G.phase_3_counter_inc++;
+              }else{
+                G.phase_3_counter_dec++;
+              }
+            }else{
+              G.phase_3_cache_misses++;
             }
           }
-
+          
+          if(G.debug) cout << endl;
           if(G.debug) cout << RESET << endl;
           iss.clear();
       }
